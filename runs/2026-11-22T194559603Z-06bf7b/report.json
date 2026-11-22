@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "2026-11-22T194559603Z-06bf7b",
+  "query": "wool scarf",
+  "purpose": "demo",
+  "startedAt": "2026-11-22T19:45:59.609Z",
+  "browserProfile": "chrome",
+  "verifiedCount": 5,
+  "gifts": [
+    {
+      "slot": 1,
+      "status": "verified",
+      "name": "Seamless Rainbow Scarf",
+      "price": "$45",
+      "url": "https://www.uncommongoods.com/product/seamless-rainbow-scarf"
+    },
+    {
+      "slot": 2,
+      "status": "verified",
+      "name": "Repurposed Sari Sun Scarf",
+      "price": "$60",
+      "url": "https://www.uncommongoods.com/product/repurposed-sari-sun-scarf"
+    },
+    {
+      "slot": 3,
+      "status": "verified",
+      "name": "Birth Month Flower Scarf",
+      "price": "$48",
+      "url": "https://www.uncommongoods.com/product/birth-month-flower-scarf"
+    },
+    {
+      "slot": 4,
+      "status": "verified",
+      "name": "Duo-Tone Reversible Woven Cashmere Blend Shawl",
+      "price": "$38",
+      "url": "https://www.uncommongoods.com/product/duo-tone-reversible-woven-cashmere-blend-shawl"
+    },
+    {
+      "slot": 5,
+      "status": "verified",
+      "name": "National Park Pom Beanie",
+      "price": "$32",
+      "url": "https://www.uncommongoods.com/product/national-park-pom-beanie"
+    }
+  ],
+  "reference": "Reference: Kimi official high-speed API — 71 TPS (user-supplied; not measured in this environment)."
+}

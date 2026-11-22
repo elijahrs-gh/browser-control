@@ -3,7 +3,7 @@
 // OpenClaw; this module only invokes documented commands and parses --json.
 import { execFile } from "node:child_process";
 import path from "node:path";
-import { readerFunctionSource } from "./reader.js";
+import { discoverFunctionSource, readerFunctionSource } from "./reader.js";
 
 const OPENCLAW_ROOT = path.resolve(process.env.OPENCLAW_ROOT || path.join(process.env.HOME, "Developer", "openclaw"));
 export const BROWSER_PROFILE = process.env.SHOP_BROWSER_PROFILE || "chrome";
@@ -53,30 +53,55 @@ export async function openLabeledTab(url, label) {
     const navigated = await browserCli(["navigate", url, "--target-id", label]);
     return { ...navigated, label, handle: label, reused: true };
   } catch (error) {
-    if (!/tab not found/i.test(String(error.message))) throw error;
+    // A missing or closed tab is reopened; anything else is a real failure.
+    if (!/tab not found|has been closed|target closed|no tab/i.test(String(error.message))) throw error;
   }
   const opened = await browserCli(["open", url, "--label", label]);
   return { ...opened, handle: tabHandle(opened), reused: false };
 }
 
 /** Run the fixed shopping reader in the exact tab. Agents never supply page code here. */
-export async function readTab(handle, options = {}) {
-  // The reader waits in-page, so no separate `wait` call is needed. A read
-  // that races the navigation commit (old/blank document) is retried.
+export function readTab(handle, options = {}) {
+  return evaluateFixed(handle, readerFunctionSource(options));
+}
+
+/** Interactive elements from the official snapshot, as { ref: { role, name } }. */
+export async function interactiveRefs(handle) {
+  const snapshot = await browserCli(["snapshot", "--interactive", "--limit", "300", "--target-id", handle], { timeoutMs: 45000 });
+  return snapshot?.refs && typeof snapshot.refs === "object" ? snapshot.refs : {};
+}
+
+export function clickRef(handle, ref) {
+  return browserCli(["click", ref, "--target-id", handle]);
+}
+
+/** Type into a snapshot ref; `submit` presses Enter. Leading dashes are dropped so text is never read as a CLI option. */
+export function typeRef(handle, ref, text, { submit = false } = {}) {
+  return browserCli(["type", ref, String(text).replace(/^-+/, "").trim(), ...(submit ? ["--submit"] : []), "--target-id", handle]);
+}
+
+/** Find the store's search URL templates on the page open in the tab (read-only). */
+export function discoverSearchTemplates(handle) {
+  return evaluateFixed(handle, discoverFunctionSource());
+}
+
+async function evaluateFixed(handle, fn) {
+  // The page functions wait in-page, so no separate `wait` call is needed. A
+  // read that races the navigation commit (old/blank document) is retried.
   for (let attempt = 0; ; attempt++) {
     try {
       const response = await browserCli(
-        ["evaluate", "--target-id", handle, "--timeout-ms", "15000", "--fn", readerFunctionSource(options)],
+        ["evaluate", "--target-id", handle, "--timeout-ms", "15000", "--fn", fn],
         { timeoutMs: 45000 },
       );
       const result = response && typeof response === "object" && "result" in response ? response.result : response;
       if (!result || typeof result !== "object" || result.v !== 1) {
-        throw new BrowserCliError("Shopping reader returned an unexpected result", { keys: Object.keys(response ?? {}) });
+        throw new BrowserCliError("Page function returned an unexpected result", { keys: Object.keys(response ?? {}) });
       }
       if (!/^https?:/.test(result.url) && attempt < 2) continue;
       return { ...result, tab: handle };
     } catch (error) {
-      if (attempt >= 2 || !/context was destroyed|navigat|detached|not found/i.test(String(error.message))) throw error;
+      if (attempt >= 2 || !/context was destroyed|navigat|detached|not found|CLI command failed|has been closed/i.test(String(error.message))) throw error;
       await new Promise((resolve) => setTimeout(resolve, 400));
     }
   }

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { chromium } from "playwright-core";
-import { readerFunctionSource } from "../shopper/reader.js";
+import { discoverFunctionSource, readerFunctionSource } from "../shopper/reader.js";
 
 const executablePath = process.env.READER_TEST_BROWSER || "/Applications/Helium.app/Contents/MacOS/Helium";
 const fixture = (name) => fs.readFileSync(path.join(import.meta.dirname, "fixtures", name), "utf8");
@@ -17,6 +17,8 @@ test("reader on fixtures", { skip: !fs.existsSync(executablePath) && "no Chromiu
   t.after(async () => { await context.close(); fs.rmSync(userDataDir, { recursive: true, force: true }); });
   await context.route("**/*", (route) => {
     const url = new URL(route.request().url());
+    const store = { "/": "store-home.html", "/find": "store-search.html", "/gifts/hand-knit-wool-scarf": "store-product.html" }[url.pathname];
+    if (url.hostname === "shop.fixture.test") return store ? route.fulfill({ status: 200, contentType: "text/html", body: fixture(store) }) : route.abort();
     const body = url.hostname.endsWith("etsy.com") ? fixture(url.pathname === "/search" ? "etsy-search.html" : "etsy-listing.html")
       : url.pathname === "/s" ? fixture("search.html") : url.hostname === "captcha.fixture.test" ? fixture("captcha.html") : url.pathname.includes("/dp/") ? fixture("product.html") : null;
     return body ? route.fulfill({ status: 200, contentType: "text/html", body }) : route.abort();
@@ -74,5 +76,29 @@ test("reader on fixtures", { skip: !fs.existsSync(executablePath) && "no Chromiu
   assert.equal(listing.url, "https://www.etsy.com/listing/3333333333/fixture-knit-scarf");
   assert.equal(listing.page.name, "Fixture Hand Knit Wool Scarf");
   assert.equal(listing.page.structured.price, "38.00");
+
+  // Any other store: discover its search URL, then read priced cards and listed products.
+  await open("https://shop.fixture.test/");
+  const discovered = await page.evaluate((source) => (0, eval)(`(${source})`)(), discoverFunctionSource());
+  assert.deepEqual(discovered.templates, [
+    { template: "https://shop.fixture.test/find?term={query}", source: "schema.org" },
+    { template: "https://shop.fixture.test/catalogsearch/result/?cat=all&q={query}", source: "form" },
+  ]);
+
+  await open("https://shop.fixture.test/find?term=gifts");
+  const strict = await run({ maxProducts: 10, anyStore: false });
+  assert.equal(strict.products.length, 0, "without anyStore only built-in product paths count");
+  const store = await run({ maxProducts: 10 }); // "auto": on for stores that are not built in
+  assert.deepEqual(store.products.map((p) => [p.title, p.url, p.prices[0] ?? null]), [
+    ["Fixture Hand Knit Wool Scarf", "https://shop.fixture.test/gifts/hand-knit-wool-scarf", "$38.00"],
+    ["Fixture Ceramic Mug – Set of 2", "https://shop.fixture.test/p/9081/ceramic-mug", "$18.50"],
+    ["Fixture Wooden Ornament Set", "https://shop.fixture.test/catalog/ornament-set", null],
+  ]);
+
+  await open("https://shop.fixture.test/gifts/hand-knit-wool-scarf");
+  const storeProduct = await run({ maxProducts: 0, needPage: true, waitMs: 1000 });
+  assert.equal(storeProduct.page.name, "Fixture Hand Knit Wool Scarf");
+  assert.deepEqual(storeProduct.page.visiblePrices, ["38.00 USD"]);
+  assert.equal(storeProduct.page.addToCartVisible, true);
 
 });

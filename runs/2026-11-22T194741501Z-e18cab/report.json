@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "2026-11-22T194741501Z-e18cab",
+  "query": "camping mug",
+  "purpose": "demo",
+  "startedAt": "2026-11-22T19:47:41.503Z",
+  "browserProfile": "chrome",
+  "verifiedCount": 5,
+  "gifts": [
+    {
+      "slot": 1,
+      "status": "verified",
+      "name": "MiiR Insulated Camp Cup - 12 fl. oz.",
+      "price": "$20.89",
+      "url": "https://www.rei.com/product/C05593/rei-co-op-miir-insulated-camp-cup-12-fl-oz"
+    },
+    {
+      "slot": 2,
+      "status": "verified",
+      "name": "Enamelware Mug - 12 fl. oz.",
+      "price": "$5.95",
+      "url": "https://www.rei.com/product/233180/alpine-mountain-gear-enamelware-mug-12-fl-oz"
+    },
+    {
+      "slot": 3,
+      "status": "verified",
+      "name": "Peanuts x Parks Project Enamel Mug",
+      "price": "$24.00",
+      "url": "https://www.rei.com/product/C09732/parks-project-peanuts-x-parks-project-enamel-mug"
+    },
+    {
+      "slot": 4,
+      "status": "verified",
+      "name": "Light Titanium 450 ml Cup - Ultralight Version",
+      "price": "$19.95",
+      "url": "https://www.rei.com/product/247049/toaks-light-titanium-450-ml-cup-ultralight-version"
+    },
+    {
+      "slot": 5,
+      "status": "verified",
+      "name": "Ti-Double 450 Mug",
+      "price": "$49.95",
+      "url": "https://www.rei.com/product/224725/snow-peak-ti-double-450-mug"
+    }
+  ],
+  "reference": "Reference: Kimi official high-speed API — 71 TPS (user-supplied; not measured in this environment)."
+}

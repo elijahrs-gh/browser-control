@@ -3,20 +3,22 @@
 // against the extension profile (default "chrome", i.e. Helium once the
 // extension is loaded there). Output is compact JSON for the agent.
 import { parseArgs } from "node:util";
-import { DEFAULT_RETAILERS, KIMI_REFERENCE, classifySample, computeTps, productIdentity, publicHttpUrl, rankRetailers, searchUrl, verifyProduct } from "../shopper/core.mjs";
-import { listTabs, openLabeledTab, readTab, tabHandle } from "../shopper/browser.mjs";
+import { DEFAULT_RETAILERS, KIMI_REFERENCE, classifySample, computeTps, fallbackSearchTemplates, fillSearchTemplate, productIdentity, publicHttpUrl, rankRetailers, resolveSite, searchUrl, verifyProduct } from "../shopper/core.mjs";
+import { clickRef, discoverSearchTemplates, interactiveRefs, listTabs, openLabeledTab, readTab, tabHandle, typeRef } from "../shopper/browser.mjs";
 import { stageDemoWindows } from "../shopper/stage.mjs";
 import { appendJsonl, createRun, readJson, readJsonl, resolveRun, writeJson } from "../shopper/runs.mjs";
 
 const USAGE = `Usage: shop.mjs <command> [options]
-  search  [--site etsy] [--query <q>]                    New run: open one retailer search, list candidates c1..cN
+  search  [--site <store>] [--query <q>]                 New run: search one store, list candidates c1..cN
+          <store> is a built-in id (etsy, amazon, walmart, target, bestbuy), any store's
+          domain (uncommongoods.com), or a URL (a search URL may contain {query})
   pick    --run <id> --ids c1,c4,...                     Verify picks in parallel into open gift slots; prints final list
   start   --query <q> [--purpose demo|bounty|test]      Create a run directory
   tabs                                                   List tabs (official handles)
-  bench   --run <id> [--rounds 1-3] [--retailers amazon,etsy,...] [--query <q>]
+  bench   --run <id> [--rounds 1-3] [--retailers amazon,etsy,example.com,...] [--query <q>]
   read    --run <id> --tab <handle> [--max-products N] [--max-chars N] [--markdown]
   open    --run <id> --url <url> --label <shop-...>      Open a labeled tab, then read it
-  stage   [--site etsy]                                  Demo layout: OpenClaw chat left, retailer window right
+  stage   [--site <store>]                                Demo layout: OpenClaw chat left, retailer window right
   verify  --run <id> --url <product url> --title <observed title> [--slot 1-5]
   report  --run <id>                                     Final list of verified gifts
   tps     --run <id> --output-tokens N --first-ms A --last-ms B --source official_speed_patch|standard_openclaw`;
@@ -64,7 +66,8 @@ async function recordCandidates(run, read, { withCids = false } = {}) {
  * live product. `stage` pre-opens shop-gift-1..5 in the retailer window so
  * these navigations stay out of the chat window.
  */
-async function verifyCandidate(run, observed, title, slot, label = `shop-gift-${slot}`) {
+const GIFT_LABEL = process.env.SHOP_GIFT_LABEL || "shop-gift";
+async function verifyCandidate(run, observed, title, slot, label = `${GIFT_LABEL}-${slot}`) {
   const tab = await openLabeledTab(observed.url, label);
   const read = await readTab(tab.handle, { maxProducts: 0, maxChars: 400, needPage: true });
   const verdict = verifyProduct({ title, url: observed.url }, read);
@@ -88,6 +91,94 @@ const giftLine = (gift) => ({
   ...(gift.status === "verified" ? {} : { reasons: gift.reasons }),
 });
 
+const SEARCH_BOX = (r) => r.role === "searchbox" || (/^(?:textbox|combobox)$/.test(r.role) && /search|find|looking for/i.test(r.name ?? ""));
+const CLOSE_POPUP = /^(?:close|dismiss|no,? thanks|not now|maybe later|×|x)\b|close (?:modal|dialog|pop-?up|banner)/i;
+const OPEN_SEARCH = /^(?:open |show )?search\b|search (?:icon|button|toggle)/i;
+
+/**
+ * Search the way a person would, through official snapshot refs: find the
+ * search box (dismissing a pop-up or opening a search toggle first if
+ * needed), type the query and press Enter. Returns the URL it landed on.
+ */
+async function searchByTyping(handle, query) {
+  const clicked = new Set();
+  let refs = await interactiveRefs(handle);
+  const box = () => Object.entries(refs).find(([, r]) => SEARCH_BOX(r))?.[0];
+  for (let step = 0; step < 3 && !box(); step++) {
+    const entries = Object.entries(refs).filter(([ref]) => !clicked.has(ref));
+    const target = entries.find(([, r]) => r.role === "button" && CLOSE_POPUP.test(r.name ?? ""))
+      ?? entries.find(([, r]) => /^(?:button|link)$/.test(r.role) && OPEN_SEARCH.test(r.name ?? ""));
+    if (!target) break;
+    clicked.add(target[0]);
+    await clickRef(handle, target[0]).catch(() => {});
+    refs = await interactiveRefs(handle);
+  }
+  const ref = box();
+  if (!ref) return null;
+  const typed = await typeRef(handle, ref, query, { submit: true });
+  return typed?.url ?? null;
+}
+
+/** Turn a search results URL back into a `{query}` template, if the query appears in it. */
+function templateFrom(url, query) {
+  for (const encoded of [encodeURIComponent(query), encodeURIComponent(query).replace(/%20/g, "+")]) {
+    if (url?.includes(encoded)) return url.replace(encoded, "{query}");
+  }
+  return null;
+}
+
+/**
+ * Open the store's search results for `query` in the labeled tab and read them.
+ * Built-in stores use their known search URL. Other stores, in order: search
+ * URLs the home page declares (schema.org, OpenSearch, search forms), typing
+ * into the site's search box, common defaults, and finally the home page's
+ * own products. Stops at the first page that yields products or is blocked.
+ */
+async function openSearch(site, query, label, readOptions) {
+  const tried = [];
+  const attempt = async (url) => {
+    const tab = await openLabeledTab(url, label);
+    const read = await readTab(tab.handle, readOptions);
+    tried.push({ url: read.url, products: read.products.length, ...(read.blocked ? { blocked: read.blocked.kind } : {}) });
+    return read;
+  };
+  if (site.startUrl) return { read: await attempt(fillSearchTemplate(site.startUrl, query, site.origin)), template: site.startUrl, tried };
+  if (site.known) return { read: await attempt(searchUrl(site.origin, query)), template: null, tried };
+  const home = await openLabeledTab(`${site.origin}/`, label);
+  const found = await discoverSearchTemplates(home.handle).catch(() => ({ templates: [] }));
+  // Follow the store wherever its home page landed (brand.com -> www.brand.co.uk, etc.).
+  const landed = URL.parse(found.url ?? "");
+  if (!landed || !/^https?:$/.test(landed.protocol)) throw new Error(`Could not open ${site.origin}. Pass the store's exact domain or a URL as --site.`);
+  site.origin = landed.origin;
+  site.merchant = landed.hostname.replace(/^www\./, "");
+  const done = (read, template) => read && (read.products.length || read.blocked) ? { read, template, tried, discovered: found.templates } : null;
+  // A failed load just moves on to the next approach.
+  const tryUrl = async (template) => {
+    try { return await attempt(fillSearchTemplate(template, query, site.origin)); } catch (error) {
+      tried.push({ template, error: String(error.message).slice(0, 160) });
+      return null;
+    }
+  };
+  for (const template of found.templates.map((t) => t.template).slice(0, 3)) {
+    const result = done(await tryUrl(template), template);
+    if (result) return result;
+  }
+  if (tried.length) await openLabeledTab(`${site.origin}/`, label);
+  const landedOn = await searchByTyping(home.handle, query).catch(() => null);
+  if (landedOn) {
+    const read = await readTab(home.handle, readOptions);
+    tried.push({ url: read.url, products: read.products.length, typed: true, ...(read.blocked ? { blocked: read.blocked.kind } : {}) });
+    const result = done(read, templateFrom(read.url, query));
+    if (result) return result;
+  }
+  for (const template of fallbackSearchTemplates(site.origin)) {
+    const result = done(await tryUrl(template), template);
+    if (result) return result;
+  }
+  // No search page yielded products: use what the home page itself shows.
+  return { read: await attempt(`${site.origin}/`), template: null, tried, discovered: found.templates };
+}
+
 const commands = {
   async start() {
     if (!values.query) throw new Error("--query is required");
@@ -103,23 +194,22 @@ const commands = {
     const run = await resolveRun(values.run);
     const meta = await readJson(run, "run.json");
     const query = values.query ?? meta.query;
-    const wanted = values.retailers?.split(",").map((value) => value.trim().toLowerCase());
-    const retailers = wanted ? DEFAULT_RETAILERS.filter((retailer) => wanted.includes(retailer.id)) : DEFAULT_RETAILERS;
-    if (!retailers.length) throw new Error(`No known retailers in --retailers. Known: ${DEFAULT_RETAILERS.map((r) => r.id).join(",")}`);
+    const wanted = values.retailers?.split(",").map((value) => value.trim()).filter(Boolean);
+    const retailers = wanted ? wanted.map((value) => resolveSite(value)) : DEFAULT_RETAILERS.map((retailer) => resolveSite(retailer.id));
     const rounds = int(values.rounds, 1, 1, 3);
     const samples = [];
     for (let round = 0; round < rounds; round++) {
       // Alternate order so no retailer always goes first.
       const order = round % 2 ? [...retailers].reverse() : retailers;
       for (const retailer of order) {
-        const url = searchUrl(retailer.origin, query);
         const label = `shop-bench-${retailer.id}`;
         const started = performance.now();
-        const sample = { round, retailer: retailer.id, merchant: retailer.merchant, requestedUrl: url, tab: label };
+        const sample = { round, retailer: retailer.id, merchant: retailer.merchant, tab: label };
         try {
-          const tab = await openLabeledTab(url, label);
-          sample.tab = tab.handle;
-          const read = await readTab(tab.handle, { maxProducts: 12, maxChars: 600, minProducts: 4 });
+          const { read, template } = await openSearch(retailer, query, label, { maxProducts: 12, maxChars: 600, minProducts: 4 });
+          // Later rounds go straight to the search URL found in the first one.
+          if (template && !retailer.startUrl && read.products.length) retailer.startUrl = template;
+          sample.requestedUrl = read.url;
           sample.wallMs = Math.round(performance.now() - started);
           Object.assign(sample, {
             observedUrl: read.url, title: read.title, blocked: read.blocked, candidates: read.products.length,
@@ -173,24 +263,20 @@ const commands = {
   },
 
   async stage() {
-    const site = (values.site ?? "etsy").toLowerCase();
-    const retailer = DEFAULT_RETAILERS.find((candidate) => candidate.id === site);
-    if (!retailer) throw new Error(`Unknown --site. Known: ${DEFAULT_RETAILERS.map((r) => r.id).join(",")}`);
-    out(await stageDemoWindows({ retailerUrl: `${retailer.origin}/`, label: `shop-search-${site}`, giftLabels: [1, 2, 3, 4, 5].map((slot) => `shop-gift-${slot}`) }));
+    const site = resolveSite(values.site ?? "etsy");
+    out(await stageDemoWindows({ retailerUrl: `${site.origin}/`, label: `shop-search-${site.id}`, giftLabels: [1, 2, 3, 4, 5].map((slot) => `${GIFT_LABEL}-${slot}`) }));
   },
 
   async search() {
-    const site = (values.site ?? "etsy").toLowerCase();
-    const retailer = DEFAULT_RETAILERS.find((candidate) => candidate.id === site);
-    if (!retailer) throw new Error(`Unknown --site. Known: ${DEFAULT_RETAILERS.map((r) => r.id).join(",")}`);
+    const site = resolveSite(values.site ?? "etsy");
     const query = values.query ?? "christmas gifts";
-    const run = await createRun({ query, purpose: values.purpose ?? "bounty" });
-    const tab = await openLabeledTab(searchUrl(retailer.origin, query), `shop-search-${site}`);
-    const read = await readTab(tab.handle, { maxProducts: 16, maxChars: 400, minProducts: 8 });
+    const run = await createRun({ query, purpose: values.purpose ?? "demo" });
+    const { read, tried } = await openSearch(site, query, `shop-search-${site.id}`, { maxProducts: 16, maxChars: 400, minProducts: 8 });
     await recordCandidates(run, read, { withCids: true });
-    await appendJsonl(run, "reads.jsonl", { tab: read.tab, url: read.url, blocked: read.blocked, productCount: read.products.length, extractedAt: read.extractedAt });
+    await appendJsonl(run, "reads.jsonl", { tab: read.tab, url: read.url, blocked: read.blocked, productCount: read.products.length, extractedAt: read.extractedAt, tried });
     out({
-      run: run.split("/").at(-1), site: retailer.merchant, url: read.url, blocked: read.blocked,
+      run: run.split("/").at(-1), site: site.merchant, url: read.url, blocked: read.blocked,
+      ...(!read.products.length && !read.blocked ? { note: "No products found. Try a more specific --query, or pass the store's search results URL as --site." } : {}),
       candidates: read.products.map((product, index) => ({
         id: `c${index + 1}`, title: product.title, price: product.prices[0] ?? null,
         ...(product.rating ? { rating: product.rating } : {}), ...(product.sponsored ? { ad: true } : {}),

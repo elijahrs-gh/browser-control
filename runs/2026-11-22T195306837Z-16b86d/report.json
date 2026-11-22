@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "2026-11-22T195306837Z-16b86d",
+  "query": "christmas ornaments",
+  "purpose": "demo",
+  "startedAt": "2026-11-22T19:53:06.843Z",
+  "browserProfile": "chrome",
+  "verifiedCount": 5,
+  "gifts": [
+    {
+      "slot": 1,
+      "status": "verified",
+      "name": "Alpaca Otter Christmas Tree Ornament",
+      "price": "$13.95",
+      "url": "https://www.crateandbarrel.com/alpaca-otter-christmas-tree-ornament/s289801"
+    },
+    {
+      "slot": 2,
+      "status": "verified",
+      "name": "Textured Metallic Glass Ball Christmas Ornaments, Boxed Set of 6",
+      "price": "$39.96",
+      "url": "https://www.crateandbarrel.com/textured-metallic-glass-ball-christmas-ornaments-boxed-set-of-6/s114671"
+    },
+    {
+      "slot": 3,
+      "status": "verified",
+      "name": "European Frosty Winter Scene Glass Christmas Tree Ornament",
+      "price": "$18.95",
+      "url": "https://www.crateandbarrel.com/european-frosty-winter-scene-glass-christmas-tree-ornament/s294426"
+    },
+    {
+      "slot": 4,
+      "status": "verified",
+      "name": "Glass Snowman Snowglobe Christmas Tree Ornament",
+      "price": "$12.95",
+      "url": "https://www.crateandbarrel.com/glass-snowman-snowglobe-christmas-tree-ornament/s377952"
+    },
+    {
+      "slot": 5,
+      "status": "verified",
+      "name": "Gold-Beaded Glitter Pinecone Christmas Tree Ornament",
+      "price": "$2.95",
+      "url": "https://www.crateandbarrel.com/gold-beaded-glitter-pinecone-christmas-tree-ornament/s670625"
+    }
+  ],
+  "reference": "Reference: Kimi official high-speed API — 71 TPS (user-supplied; not measured in this environment)."
+}

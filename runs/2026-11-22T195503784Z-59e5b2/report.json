@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "id": "2026-11-22T195503784Z-59e5b2",
+  "query": "wool socks",
+  "purpose": "demo",
+  "startedAt": "2026-11-22T19:55:03.818Z",
+  "browserProfile": "chrome",
+  "verifiedCount": 5,
+  "gifts": [
+    {
+      "slot": 1,
+      "status": "verified",
+      "name": "Trino® Tubers",
+      "price": "$8",
+      "url": "https://www.allbirds.com/products/trino-tubers-onyx"
+    },
+    {
+      "slot": 2,
+      "status": "verified",
+      "name": "Anytime Ankle Sock",
+      "price": "$8",
+      "url": "https://www.allbirds.com/products/anytime-ankle-sock-deep-navy"
+    },
+    {
+      "slot": 3,
+      "status": "verified",
+      "name": "Anytime Crew Sock",
+      "price": "$9",
+      "url": "https://www.allbirds.com/products/anytime-crew-sock-bark-grey"
+    },
+    {
+      "slot": 4,
+      "status": "verified",
+      "name": "Trino® Sprinters - Cushioned",
+      "price": "$7",
+      "url": "https://www.allbirds.com/products/trino-sprinters-cushioned-navy-night"
+    },
+    {
+      "slot": 5,
+      "status": "verified",
+      "name": "Trino® Sprinters - No Show",
+      "price": "$6",
+      "url": "https://www.allbirds.com/products/trino-sprinters-no-show-summertime-white"
+    }
+  ],
+  "reference": "Reference: Kimi official high-speed API — 71 TPS (user-supplied; not measured in this environment)."
+}

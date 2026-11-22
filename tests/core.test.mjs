@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifySample, computeTps, productIdentity, publicHttpUrl, rankRetailers, searchUrl, titleOverlap, verifyProduct } from "../shopper/core.mjs";
+import { classifySample, computeTps, fillSearchTemplate, productIdentity, publicHttpUrl, rankRetailers, resolveSite, searchUrl, siteKey, titleOverlap, verifyProduct } from "../shopper/core.mjs";
 
 test("search URLs per retailer", () => {
   assert.equal(searchUrl("https://www.amazon.com", "cozy gifts"), "https://www.amazon.com/s?k=cozy+gifts");
@@ -58,4 +58,32 @@ test("TPS formula", () => {
   assert.equal(computeTps({ outputTokens: 1001, firstTokenMs: 1000, lastTokenMs: 2000 }), 1000);
   assert.throws(() => computeTps({ outputTokens: 1, firstTokenMs: 0, lastTokenMs: 1 }));
   assert.throws(() => computeTps({ outputTokens: 10, firstTokenMs: 5, lastTokenMs: 5 }));
+});
+
+test("any store by id, domain or URL", () => {
+  assert.equal(resolveSite("etsy").known, true);
+  assert.deepEqual(resolveSite("uncommongoods.com"), { id: "uncommongoods-com", merchant: "uncommongoods.com", origin: "https://uncommongoods.com", known: false, startUrl: null });
+  assert.equal(resolveSite("https://www.amazon.co.uk").id, "amazon", "regional domains of built-in stores keep their search URL");
+  assert.equal(resolveSite("https://shop.example/search?q={query}").startUrl, "https://shop.example/search?q={query}");
+  assert.equal(resolveSite("Uncommon Goods").origin, "https://uncommongoods.com", "store names become <name>.com");
+  assert.equal(resolveSite("Crate & Barrel").origin, "https://crateandbarrel.com");
+  assert.equal(resolveSite("Best Buy").id, "bestbuy");
+  assert.throws(() => resolveSite("http://localhost:3000"));
+  assert.equal(siteKey("www.amazon.co.uk"), "amazon.co.uk");
+  assert.equal(siteKey("shop.example.com"), "example.com");
+  assert.equal(searchUrl("https://www.amazon.co.uk", "mug"), "https://www.amazon.co.uk/s?k=mug");
+  assert.equal(productIdentity("https://www.amazon.co.uk/dp/B0ABCDEFGH"), "amazon.co.uk:B0ABCDEFGH");
+});
+
+test("search templates stay on the store's site", () => {
+  assert.equal(fillSearchTemplate("https://shop.example/find?term={query}", "wool scarf", "https://shop.example"), "https://shop.example/find?term=wool+scarf");
+  assert.throws(() => fillSearchTemplate("https://evil.example/?q={query}", "x", "https://shop.example"), /leaves the store/);
+});
+
+test("other stores verify on title, page name and price", () => {
+  const candidate = { title: "Fixture Hand Knit Wool Scarf", url: "https://shop.example/gifts/hand-knit-wool-scarf" };
+  const read = { url: candidate.url, canonicalUrl: candidate.url, title: "Scarf", blocked: null, page: { name: "Fixture Hand Knit Wool Scarf", visiblePrices: ["38.00 USD"], addToCartVisible: true } };
+  assert.equal(verifyProduct(candidate, read).status, "verified");
+  assert.equal(verifyProduct(candidate, { ...read, url: "https://other.example/gifts/hand-knit-wool-scarf" }).status, "unverified");
+  assert.equal(verifyProduct(candidate, { ...read, title: "Ceramic Mug", page: { ...read.page, name: "Ceramic Mug" } }).status, "unverified");
 });

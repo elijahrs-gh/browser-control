@@ -1,6 +1,6 @@
 // Pure shopping logic: no browser, no filesystem. Unit-tested in tests/core.test.mjs.
 
-/** Configurable benchmark candidates. None is assumed to win. */
+/** Built-in stores with known search URLs and product IDs. Any other store works by domain or URL (see resolveSite). */
 export const DEFAULT_RETAILERS = [
   { id: "amazon", merchant: "Amazon", origin: "https://www.amazon.com" },
   { id: "etsy", merchant: "Etsy", origin: "https://www.etsy.com" },
@@ -18,10 +18,14 @@ const SEARCH = {
   "ebay.com": ["/sch/i.html", "_nkw"],
 };
 
+// Two-label public suffixes such as co.uk or com.au; enough to keep amazon.co.uk apart from other.co.uk.
+const MULTI_PART_SUFFIX = /^(?:co|com|org|net|ac|gov|edu|ne|or|gob)\.[a-z]{2}$/;
 export function siteKey(hostname) {
   const parts = hostname.toLowerCase().replace(/\.$/, "").split(".");
-  return parts.slice(-2).join(".");
+  const two = parts.slice(-2).join(".");
+  return parts.length > 2 && MULTI_PART_SUFFIX.test(two) ? parts.slice(-3).join(".") : two;
 }
+const brandOf = (site) => site.split(".")[0];
 
 /** Public HTTP(S) only; no credentials, no local hosts. OpenClaw's SSRF policy still applies. */
 export function publicHttpUrl(raw) {
@@ -39,11 +43,60 @@ export function publicHttpUrl(raw) {
 
 export function searchUrl(origin, query) {
   const url = new URL(publicHttpUrl(origin));
-  const [pathname, param] = SEARCH[siteKey(url.hostname)] ?? ["/search", "q"];
+  const site = siteKey(url.hostname);
+  const [pathname, param] = SEARCH[site] ?? SEARCH[`${brandOf(site)}.com`] ?? ["/search", "q"];
   url.pathname = pathname;
   url.search = "";
   url.searchParams.set(param, query);
   return url.toString();
+}
+
+/** "Crate & Barrel" -> "crateandbarrel": how most stores spell their name as a domain. */
+const nameSlug = (name) => name.toLowerCase().normalize("NFKD").replace(/&/g, "and").replace(/['’]/g, "").replace(/[^a-z0-9]+/g, "");
+
+/**
+ * A store from its name ("Uncommon Goods"), a domain ("uncommongoods.com") or
+ * a URL. A bare name becomes <name>.com; the store's home page is then
+ * followed wherever it redirects. A URL with a path or query is used as the
+ * start page, with `{query}` replaced by the search phrase.
+ */
+export function resolveSite(input = "etsy") {
+  const raw = String(input).trim();
+  const known = DEFAULT_RETAILERS.find((r) => r.id === nameSlug(raw) || nameSlug(r.merchant) === nameSlug(raw));
+  if (known) return { ...known, known: true, startUrl: null };
+  const looksLikeAddress = /^https?:\/\//i.test(raw) || /^[^\s/]+\.[a-z]{2,}(?:[/:?]|$)/i.test(raw);
+  if (!looksLikeAddress && !nameSlug(raw)) throw new Error("--site needs a store name, domain or URL.");
+  let url;
+  try {
+    url = new URL(publicHttpUrl(/^https?:\/\//i.test(raw) ? raw : `https://${looksLikeAddress ? raw : `${nameSlug(raw)}.com`}`));
+  } catch {
+    throw new Error(`--site "${raw}" is not a public store address.`);
+  }
+  const site = siteKey(url.hostname);
+  // Regional domains (amazon.co.uk) reuse the built-in store's search URL and product IDs.
+  const builtIn = DEFAULT_RETAILERS.find((r) => brandOf(siteKey(new URL(r.origin).hostname)) === brandOf(site));
+  const startUrl = url.pathname !== "/" || url.search ? url.toString().replace(/%7Bquery%7D/gi, "{query}") : null;
+  return {
+    id: builtIn?.id ?? site.replace(/[^a-z0-9]+/g, "-"),
+    merchant: builtIn?.merchant ?? url.hostname.replace(/^www\./, ""),
+    origin: url.origin,
+    known: Boolean(builtIn),
+    startUrl,
+  };
+}
+
+/** Last-resort search URLs for stores whose search could not be discovered: Shopify/most stores, then WooCommerce. */
+export function fallbackSearchTemplates(origin) {
+  return [`${origin}/search?q={query}`, `${origin}/?s={query}&post_type=product`];
+}
+
+/** Fill a search template (`{query}`) and keep it on the store's own site. */
+export function fillSearchTemplate(template, query, origin) {
+  const url = publicHttpUrl(String(template).replaceAll("{query}", encodeURIComponent(query).replace(/%20/g, "+")));
+  if (origin && siteKey(new URL(url).hostname) !== siteKey(new URL(origin).hostname)) {
+    throw new Error(`Search URL ${url} leaves the store's site.`);
+  }
+  return url;
 }
 
 /** Stable retailer product identity extracted from a URL, or null when unknown. */
@@ -51,15 +104,16 @@ export function productIdentity(raw) {
   const url = URL.parse(raw);
   if (!url) return null;
   const site = siteKey(url.hostname);
+  const brand = brandOf(site);
   const path = url.pathname;
   const match = (pattern) => pattern.exec(path)?.[1] ?? null;
   const id =
-    site === "amazon.com" ? match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/)
-    : site === "walmart.com" ? match(/\/ip\/(?:[^/]+\/)?(\d{5,})/)
-    : site === "target.com" ? match(/\/-\/A-(\d{5,})/)
-    : site === "etsy.com" ? match(/\/listing\/(\d{5,})/)
-    : site === "bestbuy.com" ? (match(/\/(\d{6,})\.p/) ?? url.searchParams.get("skuId") ?? match(/\/product\/[^/]+\/([A-Z0-9]{6,})/i))
-    : site === "ebay.com" ? match(/\/itm\/(?:[^/]+\/)?(\d{9,})/)
+    brand === "amazon" ? match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/)
+    : brand === "walmart" ? match(/\/ip\/(?:[^/]+\/)?(\d{5,})/)
+    : brand === "target" ? match(/\/-\/A-(\d{5,})/)
+    : brand === "etsy" ? match(/\/listing\/(\d{5,})/)
+    : brand === "bestbuy" ? (match(/\/(\d{6,})\.p/) ?? url.searchParams.get("skuId") ?? match(/\/product\/[^/]+\/([A-Z0-9]{6,})/i))
+    : brand === "ebay" ? match(/\/itm\/(?:[^/]+\/)?(\d{9,})/)
     : null;
   return id ? `${site}:${id}` : null;
 }
