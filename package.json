@@ -1,0 +1,18 @@
+{
+  "name": "openclaw-helium-shopper",
+  "version": "0.2.0",
+  "description": "Lets an OpenClaw agent shop live retail sites in your Helium (or other Chromium) browser and return verified real product links.",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test tests/",
+    "check": "node --check tools/shop.mjs && node --check tools/install-skill.mjs && node --check shopper/core.mjs && node --check shopper/browser.mjs && node --check shopper/reader.js && node --check shopper/runs.mjs",
+    "install:helium": "cd \"${OPENCLAW_ROOT:-$HOME/Developer/openclaw}\" && node --import ./scripts/tsx.mjs \"$INIT_CWD/tools/install-helium.mts\"",
+    "install:skill": "node tools/install-skill.mjs",
+    "shop": "node tools/shop.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.48.0"
+  }
+}
